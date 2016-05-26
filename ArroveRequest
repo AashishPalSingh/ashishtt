@@ -1,0 +1,89 @@
+package com.htt.tvc.approve.actions;
+
+import static com.htt.tvc.global.SchemaConstants.*;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import com.htt.tvc.notifications.NotificationsUtil;
+
+import com.technia.tvc.core.TVCException;
+import com.technia.tvc.core.TVCSystem;
+import com.technia.tvc.core.actions.NewTxAction;
+import com.technia.tvc.core.db.BusinessObjectUtils;
+import com.technia.tvc.core.db.select.Statement;
+import com.technia.tvc.core.db.select.StatementBuilder;
+import com.technia.tvc.core.db.transaction.TxContext;
+import com.technia.tvc.core.db.transaction.TxManager;
+import com.technia.tvc.core.util.MessageUtils;
+import com.technia.tvc.core.util.json.JSONWriter;
+import com.technia.tvc.log4j.Logger;
+import com.technia.tvc.struts.action.ActionForm;
+import com.technia.tvc.struts.action.ActionForward;
+import com.technia.tvc.struts.action.ActionMapping;
+
+import com.technia.tva.common.util.SelectUtil;
+import com.technia.tva.common.util.SelectUtil.ObjectData;
+
+public class HeliumApproveRequest extends NewTxAction {
+
+    private static final Logger logger = Logger.getLogger(HeliumApproveRequest.class);
+
+    private static final String SUCCESS = MessageUtils.getMessage(TxManager.getCurrentLocale(),
+            "com.htt.tvc.heliumApprovalSuccess");
+
+    private static final String FAILURE = MessageUtils.getMessage(TxManager.getCurrentLocale(),
+            "com.htt.tvc.heliumApprovalFailure");
+
+    private static final Statement ORIGINATOR = new StatementBuilder().attribute(
+            com.technia.tva.common.SchemaConstants.ATTRIBUTE_ORIGINATOR).toStatement();
+
+    @Override
+    public ActionForward execute(TxContext txContext,
+                                 ActionMapping actionMapping,
+                                 ActionForm actionForm,
+                                 HttpServletRequest req,
+                                 HttpServletResponse resp) throws Exception {
+        final String objectId = req.getParameter("objectId");
+        final String loggin_user = txContext.getContext().getUser();
+        final ObjectData objectData = SelectUtil.getData(objectId, Statement.NAME, ORIGINATOR);
+        final String trName = objectData.getSelectValue(Statement.NAME);
+        final String requestor = objectData.getSelectValue(ORIGINATOR);
+        String[] message = new String[2];
+        final String reviewer = BusinessObjectUtils.select(objectId,
+                SelectUtil.toAttributeStatement(attribute_HTTWRSReviewer));
+        if (loggin_user.equals(reviewer)) {
+            try {
+                sendMail(txContext, objectId, trName, requestor);
+                BusinessObjectUtils.setState(objectId, "Complete");
+                message[0] = "true";
+                message[1] = SUCCESS;
+            } catch (TVCException e) {
+                logger.error(e.getMessage(), e);
+                message[0] = e.getMessage();
+                throw e;
+            }
+        } else {
+            message[0] = "false";
+            message[1] = FAILURE;
+        }
+
+        resp.setContentType("application/json;charset=" + TVCSystem.getInstance().getEncoding());
+        JSONWriter jsonWriter = new JSONWriter(resp.getWriter());
+        jsonWriter.write("message", message);
+        logger.debug(message);
+        return null;
+    }
+
+    private static void sendMail(TxContext txContext,
+                                 final String objectId,
+                                 final String trName,
+                                 final String userName) throws Exception {
+        String changeLink = NotificationsUtil.getNotificationLinkToObject(objectId, trName);
+        String message = MessageUtils.getMessage(TxManager.getCurrentLocale(),
+                "com.htt.tvc.notifyApprovalMessageContent", trName);
+        String subject = MessageUtils.getMessage(TxManager.getCurrentLocale(),
+                "com.htt.tvc.notifyApprovalSubjectContent", trName);
+        NotificationsUtil.sendNotification(userName, subject, message);
+    }
+}
